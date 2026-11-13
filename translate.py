@@ -20,7 +20,8 @@ TIME_BUDGET = float(os.environ.get("TRANSLATE_MINUTES", "20") or 20) * 60   # �
 
 SYSTEM = """당신은 보건·의학·커뮤니케이션 분야 학술 번역가입니다. 영어 논문 제목을 한국어로 옮깁니다.
 - 국내 학계에서 쓰는 용어로 옮기세요(health communication → 헬스커뮤니케이션, health literacy → 건강 문해력,
-  misinformation → 허위정보, shared decision-making → 공동 의사결정, mHealth → 모바일 헬스, scoping review → 주제범위 문헌고찰).
+  misinformation → 허위정보, shared decision-making → 공동 의사결정, mHealth → 모바일 헬스, scoping review → 주제범위 문헌고찰,
+  dyadic → 양자(dyad) 간, emerging adults → 성인 진입기 청년, cross-sectional → 횡단, stigma → 낙인).
 - 제목처럼 간결하게, 명사형으로 끝내세요. 부제(콜론 뒤)도 함께 옮기고 콜론은 그대로 둡니다.
 - 약어·고유명사(ChatGPT, COVID-19, TikTok, JMIR 등)와 숫자는 그대로 둡니다.
 - 받은 논문은 빠짐없이 모두 답합니다."""
