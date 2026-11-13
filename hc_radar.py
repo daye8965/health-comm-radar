@@ -21,6 +21,8 @@ from pathlib import Path
 
 import requests
 
+from translate import translate_titles
+
 KST = timezone(timedelta(hours=9))
 NOW = datetime.now(KST)
 OUT = Path("docs/research.json")
@@ -290,6 +292,8 @@ def main():
     papers = {k: v for k, v in papers.items() if (v.get("공개일") or "9999") >= FROM_DATE and v["약어"] in keep}
 
     jstats = journal_stats(journals, old.get("저널"))
+    items = list(papers.values())
+    ko_cache = translate_titles(items, old.get("번역", {}), status)
     items = sorted(papers.values(), key=lambda p: (p.get("공개일", ""), p["pmid"]), reverse=True)
     status["국내"] = sum(1 for p in items if p["국내"])
     OUT.parent.mkdir(exist_ok=True)
@@ -299,6 +303,7 @@ def main():
         "상태": status,
         "건수": len(items),
         "저널": jstats,
+        "번역": ko_cache,
         "논문": items,
     }, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     log(json.dumps(status, ensure_ascii=False))

@@ -29,11 +29,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install requests
+      - run: pip install requests anthropic
 
       - name: PubMed 수집
         timeout-minutes: 40
+        # 제목 번역에 Claude를 쓴다 — 키가 없으면 번역 없이 수집만 한다
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
           HC_DAYS: ${{ github.event.inputs.days || '10' }}
         run: python hc_radar.py

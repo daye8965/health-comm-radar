@@ -77,7 +77,7 @@ td{padding:10px 8px;vertical-align:top}
 .td-title a{color:var(--text);text-decoration:none;font-weight:500;font-size:13px;line-height:1.5}
 .td-title a:hover{color:var(--accent)}
 .types{font-size:10px;color:var(--muted);margin-left:4px}
-.kw{font-size:11px;color:var(--muted);margin-top:3px}
+.en-title{font-size:11px;color:var(--muted);line-height:1.45;margin-top:2px}
 .concl{font-size:12px;color:var(--muted);line-height:1.5;margin-top:4px}
 .journal{font-size:12px;line-height:1.4}
 .journal .m{font-family:var(--mono);font-size:10px;color:var(--muted);display:block}
@@ -143,7 +143,7 @@ td{padding:10px 8px;vertical-align:top}
 </header>
 
 <div class="filter-bar">
-  <input id="search-input" type="search" placeholder="제목·키워드·저자·기관 검색 (공백=AND, -단어=제외)" oninput="onFilter()">
+  <input id="search-input" type="search" placeholder="제목(한·영)·저자·기관 검색 (공백=AND, -단어=제외)" oninput="onFilter()">
   <select id="journal-select" onchange="onFilter()"><option value="">저널 전체</option></select>
   <select id="type-select" onchange="onFilter()">
     <option value="">유형 전체</option>
@@ -161,7 +161,7 @@ td{padding:10px 8px;vertical-align:top}
 
 <main>
   <div class="notice">
-    헬스커뮤니케이션 분야 <b>상위 20개 저널</b>에 새로 실린 논문을 PubMed에서 매일 모읍니다. 논문은 지우지 않고 계속 쌓입니다. PMID를 누르면 복사됩니다.<br>
+    헬스커뮤니케이션 분야 <b>상위 20개 저널</b>에 새로 실린 논문을 PubMed에서 매일 모읍니다. 논문은 지우지 않고 계속 쌓입니다. 제목은 AI(Claude)가 한글로 옮긴 것이고 원제는 아래 회색 글씨입니다. PMID를 누르면 복사됩니다.<br>
     <span class="kr">국내·제1</span><span class="kr">국내·교신</span><span class="kr part">국내·참여</span>
     — 소속에 <b>한국(Korea)</b>이 적힌 저자가 있으면 붙입니다. <b>제1</b>은 첫 번째 저자, <b>교신</b>은 소속 칸에 이메일을 적은 저자이고,
     이메일이 아무에게도 없으면(이 분야 저널의 93%) <b>마지막 저자를 교신으로 봅니다</b>. 그 밖의 국내 저자는 <b>참여</b>입니다.
@@ -261,7 +261,7 @@ function renderJournalGuide(J) {
 // ── 필터 ──
 function searchMatch(p, q) {
   if (!q) return true;
-  const hay = [p['제목'], (p['키워드'] || []).join(' '), p['제1저자'], (p['교신'] || []).join(' '),
+  const hay = [p['제목'], p['제목한'] || '', (p['키워드'] || []).join(' '), p['제1저자'], (p['교신'] || []).join(' '),
                (p['국내'] || []).map(k => k['이름'] + ' ' + k['소속']).join(' '), p['약어']].join(' ').toLowerCase();
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => w.startsWith('-') ? (w.length < 2 || !hay.includes(w.slice(1))) : hay.includes(w));
 }
@@ -336,9 +336,9 @@ function rowHtml(p) {
   return `<tr>
     <td class="td-date">${ymd(pubDay(p))}${isNew(p) ? ' <span class="new">NEW</span>' : ''}${p['늦은등록'] ? `<div class="late" title="PubMed 등록 ${ymd(p['등록일'])} — 출판 뒤 90일 넘게 지나 올라옴">늦은 등록</div>` : ''}</td>
     <td class="journal">${esc(p['약어'])}<span class="m">${metric(p['약어'])}</span></td>
-    <td class="td-title">${krBadges(p)}<a href="https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/" target="_blank" rel="noopener">${esc(p['제목'])}</a>
+    <td class="td-title">${krBadges(p)}<a href="https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/" target="_blank" rel="noopener">${esc(p['제목한'] || p['제목'])}</a>
       ${(p['유형'] || []).length ? `<span class="types">${esc(p['유형'].slice(0, 2).join(' · '))}</span>` : ''}
-      ${(p['키워드'] || []).length ? `<div class="kw">#${p['키워드'].map(esc).join(' #')}</div>` : ''}
+      ${p['제목한'] ? `<div class="en-title">${esc(p['제목'])}</div>` : ''}
       ${p['결론'] ? `<div class="concl">${esc(p['결론'])}</div>` : ''}</td>
     <td class="authors">${authorsCell(p)}</td>
     <td><span class="pmid" title="눌러서 복사" onclick="navigator.clipboard?.writeText('${p.pmid}');this.textContent='복사됨';setTimeout(()=>this.textContent='${p.pmid}',900)">${p.pmid}</span></td>
@@ -485,15 +485,15 @@ function anOpen(which, i, pick) {
 // ── 엑셀 ──
 function downloadExcel() {
   const rows = tab === 'list' ? lastRows : sorted(baseRows());
-  const head = ['공개일', 'PubMed 등록일', '저널', '피인용(OpenAlex 2년)', '제목', '유형', '키워드', '국내', '국내 저자(역할·소속)',
+  const head = ['공개일', 'PubMed 등록일', '저널', '피인용(OpenAlex 2년)', '제목(한글)', '제목', '유형', '키워드', '국내', '국내 저자(역할·소속)',
                 '제1저자', '교신', '교신 추정', '저자수', '결론', 'PMID', 'DOI', '링크'];
   const aoa = [head, ...rows.map(p => [pubDay(p), p['등록일'] || '', p['약어'], data['저널']?.[p['약어']]?.['지표'] ?? '',
-    p['제목'], (p['유형'] || []).join(', '), (p['키워드'] || []).join(', '), (p['국내역할'] || []).join('·'),
+    p['제목한'] || '', p['제목'], (p['유형'] || []).join(', '), (p['키워드'] || []).join(', '), (p['국내역할'] || []).join('·'),
     (p['국내'] || []).map(k => `${k['이름']}(${k['역할'].join('·')}, ${k['소속']})`).join('; '),
     p['제1저자'] || '', (p['교신'] || []).join(', '), p['교신추정'] ? '마지막 저자' : '', p['저자수'], p['결론'] || '',
     p.pmid, p.doi || '', `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/`])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  const LEFT = new Set(['제목', '키워드', '국내 저자(역할·소속)', '결론', '링크']);
+  const LEFT = new Set(['제목(한글)', '제목', '키워드', '국내 저자(역할·소속)', '결론', '링크']);
   const range = XLSX.utils.decode_range(ws['!ref']);
   for (let c = range.s.c; c <= range.e.c; c++) for (let r = range.s.r; r <= range.e.r; r++) {
     const cell = ws[XLSX.utils.encode_cell({r, c})];
@@ -501,7 +501,7 @@ function downloadExcel() {
     cell.s = {font: {name: '나눔고딕', sz: 9, bold: r === 0}, alignment: {horizontal: LEFT.has(head[c]) && r ? 'left' : 'center', vertical: 'center', wrapText: false},
               ...(r === 0 ? {fill: {fgColor: {rgb: 'F2F2F0'}}} : {})};
   }
-  ws['!cols'] = head.map(h => ({wch: {제목: 60, '국내 저자(역할·소속)': 40, 결론: 50, 키워드: 30, 링크: 36}[h] || 12}));
+  ws['!cols'] = head.map(h => ({wch: {'제목(한글)': 50, 제목: 60, '국내 저자(역할·소속)': 40, 결론: 50, 키워드: 30, 링크: 36}[h] || 12}));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, tab === 'list' ? VIEWS[view].label.replace(/[^\w가-힣·]/g, '').slice(0, 28) || '논문' : '논문');
   XLSX.writeFile(wb, `헬스커뮤니케이션_논문_${today()}_${rows.length}편.xlsx`);

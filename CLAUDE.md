@@ -4,7 +4,7 @@
 서울아산병원 홍보팀 `amc-research-radar`(연구성과 레이더)와 같은 짜임새·화면 양식입니다.
 
 - 공개 주소: https://daye8965.github.io/health-comm-radar/ (공개 저장소 — `docs/`는 그대로 공개됩니다)
-- 의존: `requests`만. 화면은 빌드 없는 단일 `docs/index.html` + `xlsx-js-style`(엑셀)
+- 의존: `requests`, `anthropic`(제목 번역). 화면은 빌드 없는 단일 `docs/index.html` + `xlsx-js-style`(엑셀)
 
 ## 구조
 
@@ -12,6 +12,7 @@
 |---|---|
 | `journals.csv` | 수집 저널 20곳(순위·약어·저널·issn·분류). **사람이 고치는 파일** |
 | `hc_radar.py` | PubMed 수집 · [국내] 판정 · OpenAlex 저널 지표 → `docs/research.json` |
+| `translate.py` | 논문 제목 한글 번역(Claude `claude-haiku-5-5`) — `research.json`의 `번역`(pmid → 한글)에 쌓음 |
 | `docs/index.html` | 화면 (논문 목록 / 분석 탭) |
 | `docs/research.json` | 수집 결과. 사람이 편집하지 말 것. 약 9MB(gzip 2.4MB) |
 | `.github/workflows/collect.yml` | 매일 2번(본·예비) 수집·커밋. 수동 실행 때 `days`로 다시 훑을 기간 |
@@ -43,6 +44,17 @@ PubMed에 실리는 저널 중 **헬스커뮤니케이션이 주제의 중심**�
 - **esearch는 XML로 받습니다** — JSON은 검색식 번역 칸에 제어 문자가 섞여 `JSONDecodeError`가 났습니다.
 - **efetch 응답이 가끔 중간에 끊깁니다**(`ParseError`). 4번까지 다시 받습니다.
 - 공개일 = 출판일과 PubMed 등록일 중 빠른 날. 등록이 출판보다 90일 넘게 늦으면 `늦은등록`(새 논문 표시 안 함).
+
+## 제목 번역 (`translate.py`, 2026-11-13)
+
+- 화면은 **한글 제목을 크게, 원제를 아래 회색으로** 보여 줍니다. 키워드 해시태그는 사용자 요청으로 화면에서 뺐습니다
+  (데이터와 엑셀에는 남아 있습니다).
+- `claude-haiku-5-5`에 40편씩(`BATCH`) 구조화 출력(JSON 스키마)으로 묻습니다. **한 번 번역한 pmid는 다시 묻지 않습니다**
+  (`번역` 캐시). 새 논문부터 번역하고, 한 실행에 최대 `TRANSLATE_MAX_CALLS`(기본 400)번 — 처음 1만 편이 한 번에 끝납니다.
+- 시스템 프롬프트에 국내 학계 용어(헬스커뮤니케이션·건강 문해력·허위정보·공동 의사결정·주제범위 문헌고찰)를 적어 뒀습니다.
+  용어를 바꾸려면 `SYSTEM`을 고치고 `번역` 캐시를 비우세요(전부 비우면 다시 1만 편을 번역합니다 — 수십 센트).
+- 저장소 Secret `ANTHROPIC_API_KEY`가 없으면 번역 없이 수집만 하고 화면은 영문 제목을 그대로 씁니다.
+  키·권한 오류는 첫 호출에서 멈추고 `상태.번역`에 `중단:`이 남습니다.
 
 ## [국내] 딱지
 
