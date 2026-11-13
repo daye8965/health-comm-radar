@@ -7,11 +7,16 @@
 import json
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 MODEL = "claude-haiku-5-5"
 PRICE_IN, PRICE_OUT = 0.10, 0.50
 BATCH = 40
 MAX_CALLS = int(os.environ.get("TRANSLATE_MAX_CALLS", "400") or 400)
+WORKERS = 8             # 한 번에 하나씩 물으면 1만 편에 1시간 반이 걸려 워크플로 시간 한도에 걸렸다(2026-11-13)
+TIME_BUDGET = float(os.environ.get("TRANSLATE_MINUTES", "20") or 20) * 60   # 이 시간이 지나면 새로 묻지 않는다 — 남은 건 다음 실행
 
 SYSTEM = """당신은 보건·의학·커뮤니케이션 분야 학술 번역가입니다. 영어 논문 제목을 한국어로 옮깁니다.
 - 국내 학계에서 쓰는 용어로 옮기세요(health communication → 헬스커뮤니케이션, health literacy → 건강 문해력,
@@ -43,16 +48,22 @@ class Translator:
         self.client = None
         self.fatal = None
         self.calls = self.tin = self.tout = self.errors = 0
+        self.lock = threading.Lock()
+        self.start = time.monotonic()
         if os.environ.get("ANTHROPIC_API_KEY", "").strip():
             import anthropic
             self.a = anthropic
             self.client = anthropic.Anthropic(max_retries=4)
 
     def ready(self):
-        return self.client is not None and not self.fatal and self.calls < MAX_CALLS
+        return (self.client is not None and not self.fatal and self.calls < MAX_CALLS
+                and time.monotonic() - self.start < TIME_BUDGET)
 
     def ask(self, chunk):
-        self.calls += 1
+        with self.lock:
+            if not self.ready():
+                return None
+            self.calls += 1
         a = self.a
         text = "\n".join(f"[{p['pmid']}] {p['제목']}" for p in chunk)
         try:
@@ -64,23 +75,27 @@ class Translator:
                 messages=[{"role": "user", "content": text}],
             )
         except a.APIError as e:
-            self.errors += 1
+            with self.lock:
+                self.errors += 1
             if isinstance(e, (a.AuthenticationError, a.PermissionDeniedError)):
                 self.fatal = f"{type(e).__name__}: {str(e)[:200]}"
                 print(f"  [중단] {self.fatal} — ANTHROPIC_API_KEY를 확인하세요")
             else:
                 print(f"  API 오류: {type(e).__name__}: {str(e)[:200]}")
             return None
-        self.tin += resp.usage.input_tokens
-        self.tout += resp.usage.output_tokens
+        with self.lock:
+            self.tin += resp.usage.input_tokens
+            self.tout += resp.usage.output_tokens
         if resp.stop_reason in ("refusal", "max_tokens"):
-            self.errors += 1
+            with self.lock:
+                self.errors += 1
             return None
         body = next((b.text for b in resp.content if b.type == "text"), "")
         try:
             return json.loads(body)
         except ValueError:
-            self.errors += 1
+            with self.lock:
+                self.errors += 1
             return None
 
     def cost(self):
@@ -93,20 +108,25 @@ def translate_titles(papers, cache, status):
     todo.sort(key=lambda p: (p.get("공개일", ""), p["pmid"]), reverse=True)
     t = Translator()
     done = 0
-    for i in range(0, len(todo), BATCH):
-        if not t.ready():
-            break
-        chunk = todo[i:i + BATCH]
-        ans = t.ask(chunk)
-        if not ans:
-            continue
-        want = {p["pmid"] for p in chunk}
-        for r in ans.get("결과", []):
-            pmid = re.sub(r"\D", "", r.get("pmid", ""))
-            ko = (r.get("번역") or "").strip()
-            if pmid in want and ko and re.search("[가-힣]", ko):
-                cache[pmid] = ko[:300]
-                done += 1
+    chunks = [todo[i:i + BATCH] for i in range(0, len(todo), BATCH)]
+
+    def work(chunk):
+        return chunk, (t.ask(chunk) if t.ready() else None)
+
+    if t.client and chunks:
+        with ThreadPoolExecutor(WORKERS) as ex:
+            for chunk, ans in ex.map(work, chunks):
+                if not ans:
+                    continue
+                want = {p["pmid"] for p in chunk}
+                for r in ans.get("결과", []):
+                    pmid = re.sub(r"\D", "", r.get("pmid", ""))
+                    ko = (r.get("번역") or "").strip()
+                    if pmid in want and ko and re.search("[가-힣]", ko):
+                        cache[pmid] = ko[:300]
+                        done += 1
+                if done and done % 800 < BATCH:
+                    print(f"  번역 {done}편", flush=True)
     alive = {p["pmid"] for p in papers}
     cache = {k: v for k, v in cache.items() if k in alive}
     for p in papers:
