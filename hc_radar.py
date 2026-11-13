@@ -21,6 +21,7 @@ from pathlib import Path
 
 import requests
 
+from countries import ISO, country_of
 from translate import translate_titles
 
 KST = timezone(timedelta(hours=9))
@@ -170,6 +171,7 @@ def parse_article(pa, by_ta):
     n = len(authors)
     names, kor = [], []
     corr = []
+    first_c, corr_c = "", []
     # 교신저자 — PubMed는 따로 표시하지 않는다. 소속 칸에 이메일을 적은 저자가 대개 교신인데, 이 분야 저널은
     # 7%만 이메일을 남긴다. 그래서 이메일이 아무에게도 없으면 **마지막 저자를 교신으로 본다**(분야 관행)
     any_mail = any("@" in text_of(a) for au in authors for a in au.findall("AffiliationInfo/Affiliation"))
@@ -181,6 +183,12 @@ def parse_article(pa, by_ta):
         names.append(name)
         if is_corr:
             corr.append(name)
+        # 나라 — 소속이 여럿이면 처음 찾은 것(대개 주 소속)
+        cty = next((c for c in map(country_of, affs) if c), "")
+        if i == 0:
+            first_c = cty
+        if is_corr and cty and cty not in corr_c:
+            corr_c.append(cty)
         ko = [a for a in affs if is_korea(a)]
         if ko:
             roles = [r for r, ok in (("제1", i == 0), ("교신", is_corr)) if ok]
@@ -209,6 +217,8 @@ def parse_article(pa, by_ta):
         "마지막저자": names[-1] if n > 1 else "",
         "국내": kor[:8],
         "국내역할": lead or (["참여"] if kor else []),
+        # 분석 탭 '나라별' — 교신이 안 잡히는 1인 저자 논문은 제1저자 나라를 교신으로도 쓴다
+        "국가": {"제1": first_c, "교신": corr_c or ([first_c] if n == 1 and first_c else [])},
         "키워드": kws,
         "결론": conclusion_of(mc),
     }
@@ -234,6 +244,42 @@ def fetch_articles(pmids, by_ta):
                 out.append(a)
         log(f"  efetch {min(i + 200, len(pmids))}/{len(pmids)}")
     return out
+
+
+def fill_countries(papers, status, limit=2000):
+    """소속에 나라 이름이 없어 비어 있는 제1·교신 나라를 OpenAlex 기관 정보로 채운다(DOI로 50편씩).
+    한 번 물어본 논문은 `국가확인`을 붙여 다시 묻지 않는다."""
+    todo = [p for p in papers if p.get("doi") and not p.get("국가확인")
+            and (not p["국가"]["제1"] or not p["국가"]["교신"])][:limit]
+    filled = 0
+    for i in range(0, len(todo), 50):
+        chunk = todo[i:i + 50]
+        by_doi = {p["doi"].lower(): p for p in chunk}
+        try:
+            r = requests.get("https://api.openalex.org/works", headers=UA, timeout=60, params={
+                "filter": "doi:" + "|".join(by_doi), "per-page": 50,
+                "select": "doi,authorships"}).json()
+        except Exception as e:
+            log("  OpenAlex 나라 실패:", type(e).__name__)
+            break
+        for w in r.get("results", []):
+            p = by_doi.get((w.get("doi") or "").replace("https://doi.org/", "").lower())
+            if not p:
+                continue
+            au = w.get("authorships") or []
+            iso = lambda a: next((ISO.get(c) for c in (a.get("countries") or []) if ISO.get(c)), "")
+            c = p["국가"]
+            if not c["제1"] and au:
+                c["제1"] = iso(au[0])
+                filled += bool(c["제1"])
+            if not c["교신"]:
+                cs = [iso(a) for a in au if a.get("is_corresponding")] or ([iso(au[-1])] if p.get("교신추정") and au else [])
+                c["교신"] = [x for x in dict.fromkeys(cs) if x]
+                filled += bool(c["교신"])
+        for p in chunk:
+            p["국가확인"] = True
+        time.sleep(0.2)
+    status["나라"] = f"OpenAlex로 채움 {filled} · 물어본 논문 {len(todo)}"
 
 
 def journal_stats(journals, old):
@@ -291,6 +337,11 @@ def main():
     keep = {j["약어"] for j in journals}
     papers = {k: v for k, v in papers.items() if (v.get("공개일") or "9999") >= FROM_DATE and v["약어"] in keep}
 
+    # 새로 받은 논문은 PubMed 기준으로 나라를 다시 매겼으니 OpenAlex 확인 표시를 지운다
+    for a in fresh:
+        if a["pmid"] in papers:
+            papers[a["pmid"]].pop("국가확인", None)
+    fill_countries(list(papers.values()), status)
     jstats = journal_stats(journals, old.get("저널"))
     items = list(papers.values())
     ko_cache = translate_titles(items, old.get("번역", {}), status)

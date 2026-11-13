@@ -371,7 +371,8 @@ function renderStats(base) {
 
 // ── 분석 ──
 let anView = {};
-let anAll = {j: false, o: false, p: false};
+let anAll = {j: false, o: false, p: false, c: false};
+let anCountrySort = 'corr';     // 나라별 표 정렬 — corr 교신 · first 제1저자
 function barCell(n, max, color) {
   const w = max ? Math.round(n / max * 140) : 0;
   return `<span class="bar"><i style="width:${w}px;background:${color}"></i><span>${n.toLocaleString()}</span></span>`;
@@ -382,8 +383,16 @@ function anClick(which, i, pick, inner, n) {
 }
 const orgKey = s => (s || '').replace(/^(the)\s+/i, '').replace(/\s+(College of Medicine|School of Medicine|College of Nursing|Graduate School.*|College of .*|School of .*)$/i, '').trim();
 function analysisData(base) {
-  const J = new Map(), O = new Map(), P = new Map();
+  const J = new Map(), O = new Map(), P = new Map(), C = new Map();
+  const crow = k => C.get(k) || {key: k, first: 0, corr: 0, firstList: [], corrList: []};
   for (const p of base) {
+    // 나라별 — 제1저자 나라 1건, 교신저자 나라마다 1건(공동 교신이 두 나라면 두 나라 모두)
+    const g = p['국가'] || {};
+    const f = g['제1'] || '미상';
+    const fr = crow(f); fr.first++; fr.firstList.push(p); C.set(f, fr);
+    for (const c of (g['교신'] && g['교신'].length ? g['교신'] : ['미상'])) {
+      const cr = crow(c); cr.corr++; cr.corrList.push(p); C.set(c, cr);
+    }
     const j = J.get(p['약어']) || {key: p['약어'], n: 0, kr: 0, lead: 0, list: []};
     j.n++; j.kr += hasKr(p); j.lead += krLead(p); j.list.push(p); J.set(p['약어'], j);
     const seenO = new Set();
@@ -407,15 +416,22 @@ function analysisData(base) {
   const people = [...P.values()].map(r => ({...r, org: Object.entries(r.orgs).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'}));
   return {journals: [...J.values()].sort((a, b) => b.kr - a.kr || b.n - a.n),
           orgs: [...O.values()].sort((a, b) => b.n - a.n || b.lead - a.lead),
-          people: people.sort((a, b) => (b.first + b.corr) - (a.first + a.corr) || b.n - a.n)};
+          people: people.sort((a, b) => (b.first + b.corr) - (a.first + a.corr) || b.n - a.n),
+          countries: [...C.values()]};
 }
 function renderAnalysis(base) {
-  const {journals, orgs, people} = analysisData(base);
+  const {journals, orgs, people, countries} = analysisData(base);
+  const cs = countries.slice().sort((a, b) => (a.key === '미상') - (b.key === '미상')
+    || (anCountrySort === 'first' ? b.first - a.first || b.corr - a.corr : b.corr - a.corr || b.first - a.first));
+  const Cn = anAll.c ? cs : cs.slice(0, 20);
+  const maxF = Math.max(1, ...countries.map(c => c.first)), maxC = Math.max(1, ...countries.map(c => c.corr));
+  const nCountry = countries.filter(c => c.key !== '미상').length;
+  const unknownF = countries.find(c => c.key === '미상')?.first || 0;
   const kr = base.filter(hasKr).length, lead = base.filter(krLead).length;
   const J = anAll.j ? journals : journals.slice(0, 20);
   const O = anAll.o ? orgs : orgs.slice(0, 20);
   const Pp = anAll.p ? people : people.slice(0, 30);
-  anView = {j: J, o: O, p: Pp};
+  anView = {j: J, o: O, p: Pp, c: Cn};
   const maxN = Math.max(1, ...journals.map(j => j.n)), maxK = Math.max(1, ...journals.map(j => j.kr)), maxO = Math.max(1, ...orgs.map(o => o.n));
   $('an-panel').innerHTML = `
     <div class="an-grid">
@@ -436,6 +452,25 @@ function renderAnalysis(base) {
           <td class="num">${anClick('j', i, 'lead', j.lead, j.lead)}</td>
           <td class="num">${j.n ? (j.kr / j.n * 100).toFixed(1) + '%' : '—'}</td></tr>`).join('')}</tbody>
       </table></div>
+    </div>
+    <div class="an-sec">
+      <h2>나라별 — 제1저자·교신저자</h2>
+      <div class="desc">논문마다 <b>제1저자의 나라</b>와 <b>교신저자의 나라</b>를 셌습니다(${nCountry}개 나라). 공동 교신이 두 나라면 두 나라에 1건씩 잡힙니다.
+        나라는 저자 소속 칸의 끝(…, 도시, 나라)에서 읽고, 소속에 나라가 안 적힌 논문은 OpenAlex 기관 정보로 채웠습니다(미상 ${unknownF.toLocaleString()}편).
+        교신은 이메일 표시가 없으면 마지막 저자로 본 값입니다. 비중은 위 기간·필터 논문 ${base.length.toLocaleString()}편 중 비율입니다.
+        <span style="white-space:nowrap">정렬:
+        <button class="pill${anCountrySort === 'corr' ? ' on' : ''}" onclick="anCountrySort='corr';render()">교신 순</button>
+        <button class="pill${anCountrySort === 'first' ? ' on' : ''}" onclick="anCountrySort='first';render()">제1저자 순</button></span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th style="width:150px">나라</th><th>제1저자 논문</th><th class="num">비중</th><th>교신저자 논문</th><th class="num">비중</th></tr></thead>
+        <tbody>${Cn.map((c, i) => `<tr${c.key === '한국' ? ' style="background:var(--kr-bg)"' : ''}>
+          <td>${c.key === '한국' ? `<b style="color:var(--kr)">${esc(c.key)}</b>` : c.key === '미상' ? `<span style="color:var(--muted)">미상</span>` : esc(c.key)}</td>
+          <td>${anClick('c', i, 'first', barCell(c.first, maxF, 'var(--blue)'), c.first)}</td>
+          <td class="num">${base.length ? (c.first / base.length * 100).toFixed(1) + '%' : '—'}</td>
+          <td>${anClick('c', i, 'corr', barCell(c.corr, maxC, 'var(--accent)'), c.corr)}</td>
+          <td class="num">${base.length ? (c.corr / base.length * 100).toFixed(1) + '%' : '—'}</td></tr>`).join('')}</tbody>
+      </table></div>
+      ${countries.length > 20 ? `<button class="more-btn" onclick="anAll.c=!anAll.c;render()">${anAll.c ? '20개만 보기' : `전체 ${countries.length}개 보기`}</button>` : ''}
     </div>
     <div class="an-sec">
       <h2>국내 기관별</h2>
@@ -468,6 +503,7 @@ function anOpen(which, i, pick) {
   let list = row.list;
   if (which === 'j') list = pick === 'kr' ? list.filter(hasKr) : pick === 'lead' ? list.filter(krLead) : list;
   if (which === 'o' && pick === 'lead') list = row.leadList;
+  if (which === 'c') list = pick === 'first' ? row.firstList : row.corrList;
   if (which === 'p' && pick !== 'all') {
     const role = {first: '제1', corr: '교신', part: '참여'}[pick];
     const k = row.key;
@@ -475,7 +511,8 @@ function anOpen(which, i, pick) {
   }
   list = list.slice().sort((a, b) => pubDay(b).localeCompare(pubDay(a)));
   const L = {all: '논문', kr: '국내 참여', lead: '국내 제1·교신', first: '제1저자', corr: '교신', part: '참여'}[pick];
-  $('modal-title').textContent = `${row.key} · ${L} ${list.length}편`;
+  const title = which === 'c' ? `${row.key} · ${pick === 'first' ? '제1저자' : '교신저자'} 논문 ${list.length}편` : null;
+  $('modal-title').textContent = title || `${row.key} · ${L} ${list.length}편`;
   $('modal-body').innerHTML = `<table><thead><tr><th style="width:90px">공개일</th><th style="width:140px">저널</th><th>논문</th><th style="width:220px">저자</th><th style="width:80px">PMID</th></tr></thead>
     <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
   $('modal').hidden = false;
@@ -486,11 +523,11 @@ function anOpen(which, i, pick) {
 function downloadExcel() {
   const rows = tab === 'list' ? lastRows : sorted(baseRows());
   const head = ['공개일', 'PubMed 등록일', '저널', '피인용(OpenAlex 2년)', '제목(한글)', '제목', '유형', '키워드', '국내', '국내 저자(역할·소속)',
-                '제1저자', '교신', '교신 추정', '저자수', '결론', 'PMID', 'DOI', '링크'];
+                '제1저자', '제1저자 나라', '교신', '교신 나라', '교신 추정', '저자수', '결론', 'PMID', 'DOI', '링크'];
   const aoa = [head, ...rows.map(p => [pubDay(p), p['등록일'] || '', p['약어'], data['저널']?.[p['약어']]?.['지표'] ?? '',
     p['제목한'] || '', p['제목'], (p['유형'] || []).join(', '), (p['키워드'] || []).join(', '), (p['국내역할'] || []).join('·'),
     (p['국내'] || []).map(k => `${k['이름']}(${k['역할'].join('·')}, ${k['소속']})`).join('; '),
-    p['제1저자'] || '', (p['교신'] || []).join(', '), p['교신추정'] ? '마지막 저자' : '', p['저자수'], p['결론'] || '',
+    p['제1저자'] || '', p['국가']?.['제1'] || '', (p['교신'] || []).join(', '), (p['국가']?.['교신'] || []).join(', '), p['교신추정'] ? '마지막 저자' : '', p['저자수'], p['결론'] || '',
     p.pmid, p.doi || '', `https://pubmed.ncbi.nlm.nih.gov/${p.pmid}/`])];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   const LEFT = new Set(['제목(한글)', '제목', '키워드', '국내 저자(역할·소속)', '결론', '링크']);
