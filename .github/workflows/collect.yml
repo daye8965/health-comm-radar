@@ -1,0 +1,49 @@
+name: 논문 수집
+
+on:
+  schedule:
+    # GitHub 예약 실행은 2~4시간 40분 밀리고, 가끔 통째로 건너뛴다(연구성과 레이더 2026-11-10).
+    # 그래서 본 실행과 예비 실행 두 번. 앞이 돌았으면 뒤는 대개 변경 없이 끝난다
+    - cron: "50 17 * * *"   # KST 02:50 → 실제로는 05~07시
+    - cron: "20 19 * * *"   # KST 04:20 예비 → 실제로는 07~09시
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "최근 며칠치를 다시 훑을지 (2025-01-01부터 다시 채우기는 약 700)"
+        required: false
+        default: "10"
+
+concurrency:
+  group: hc-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: PubMed 수집
+        timeout-minutes: 40
+        env:
+          NCBI_API_KEY: ${{ secrets.NCBI_API_KEY }}
+          HC_DAYS: ${{ github.event.inputs.days || '10' }}
+        run: python hc_radar.py
+
+      - name: 변경사항 커밋 & 푸시
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/
+          git diff --staged --quiet && { echo "변경 없음"; exit 0; }
+          git commit -m "자동 수집 $(date +'%Y-%m-%d')"
+          git pull --rebase --autostash origin main
+          git push
