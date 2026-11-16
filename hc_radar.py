@@ -22,6 +22,7 @@ from pathlib import Path
 import requests
 
 from countries import ISO, country_of
+import sheet_if
 from translate import translate_titles
 
 KST = timezone(timedelta(hours=9))
@@ -282,20 +283,38 @@ def fill_countries(papers, status, limit=2000):
     status["나라"] = f"OpenAlex로 채움 {filled} · 물어본 논문 {len(todo)}"
 
 
-def journal_stats(journals, old):
-    """OpenAlex 2년 평균 피인용 — 실패하면 지난 값."""
+def journal_stats(journals, old, status):
+    """저널 지표 — JCR IF(공유 구글 시트, sheet_if) + OpenAlex 2년 평균 피인용. 실패하면 지난 값."""
+    try:
+        s_issn, s_title = sheet_if.fetch()
+    except Exception as e:
+        log("공유 시트 IF 실패:", type(e).__name__, e)
+        s_issn, s_title = None, None
     out = {}
     for j in journals:
         prev = (old or {}).get(j["약어"], {})
         try:
             s = requests.get(f"https://api.openalex.org/sources/issn:{j['issn']}", headers=UA, timeout=30).json()
-            out[j["약어"]] = {"저널": j["저널"], "issn": j["issn"], "분류": j.get("분류", ""), "순위": int(j["순위"]),
-                             "지표": round(s["summary_stats"]["2yr_mean_citedness"], 2),
-                             "h": s["summary_stats"].get("h_index")}
+            rec = {"저널": j["저널"], "issn": j["issn"], "분류": j.get("분류", ""), "순위": int(j["순위"]),
+                   "지표": round(s["summary_stats"]["2yr_mean_citedness"], 2),
+                   "h": s["summary_stats"].get("h_index"), "issn목록": s.get("issn") or [j["issn"]]}
         except Exception:
-            out[j["약어"]] = prev or {"저널": j["저널"], "issn": j["issn"], "분류": j.get("분류", ""),
-                                      "순위": int(j["순위"]), "지표": None}
+            rec = dict(prev) or {"저널": j["저널"], "issn": j["issn"], "분류": j.get("분류", ""),
+                                 "순위": int(j["순위"]), "지표": None, "issn목록": [j["issn"]]}
+        rec["순위"] = int(j["순위"])
+        # 시트는 저널마다 ISSN이 하나(인쇄 또는 전자)뿐이라 OpenAlex가 아는 ISSN 전부로 찾는다
+        if s_issn is not None:
+            sr = sheet_if.lookup({"issn": rec.get("issn목록") or [j["issn"]], "저널": j["저널"]}, s_issn, s_title)
+            for k in ("IF", "IF상위", "사분위", "IF연도", "JCR분야"):
+                rec.pop(k, None)
+            if sr:
+                rec.update({"IF": sr["IF"], "IF상위": sr.get("상위"), "사분위": sr.get("사분위"),
+                            "IF연도": sr.get("연도"), "JCR분야": sr.get("분야")})
+        out[j["약어"]] = rec
         time.sleep(0.2)
+    n_if = sum(1 for r in out.values() if r.get("IF") is not None)
+    status["저널IF"] = (f"공유 시트 {len(s_issn):,}개 저널 중 우리 저널 {n_if}/{len(out)}곳 IF 확인" if s_issn is not None
+                      else f"공유 시트 읽기 실패 — 지난 IF {n_if}곳 유지")
     return out
 
 
@@ -342,7 +361,7 @@ def main():
         if a["pmid"] in papers:
             papers[a["pmid"]].pop("국가확인", None)
     fill_countries(list(papers.values()), status)
-    jstats = journal_stats(journals, old.get("저널"))
+    jstats = journal_stats(journals, old.get("저널"), status)
     items = list(papers.values())
     ko_cache = translate_titles(items, old.get("번역", {}), status)
     items = sorted(papers.values(), key=lambda p: (p.get("공개일", ""), p["pmid"]), reverse=True)

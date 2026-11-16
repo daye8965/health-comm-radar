@@ -12,6 +12,7 @@
 |---|---|
 | `journals.csv` | 수집 저널 20곳(순위·약어·저널·issn·분류). **사람이 고치는 파일** |
 | `hc_radar.py` | PubMed 수집 · [국내] 판정 · OpenAlex 저널 지표 → `docs/research.json` |
+| `sheet_if.py` | 공유 구글 시트 「저널 IF 공유 데이터 \| S2Journal」에서 JCR IF를 읽음(연구성과 레이더와 같은 파일 — 고치면 양쪽 함께) |
 | `countries.py` | 소속 문자열 → 한글 나라 이름(분석 탭 나라별). OpenAlex ISO 코드 → 한글 표(`ISO`)도 여기 |
 | `translate.py` | 논문 제목 한글 번역(Claude `claude-haiku-5-5`) — `research.json`의 `번역`(pmid → 한글)에 쌓음 |
 | `docs/index.html` | 화면 (논문 목록 / 분석 탭) |
@@ -35,6 +36,22 @@ PubMed에 실리는 저널 중 **헬스커뮤니케이션이 주제의 중심**�
   J Health Commun(3.3)은 피인용으로는 13·14위입니다.
 - 검색은 PubMed 저널 약어 `[ta]`로 합니다. 약어가 비슷한 다른 저널이 딸려 오면 `parse_article`이
   `MedlineTA`로 다시 걸러 냅니다.
+
+## 저널 IF — 공유 구글 시트 (2026-11-16)
+
+- 사용자가 S2Journal JCR 전체(약 2만 2천 저널)를 구글 시트로 정리해 '링크가 있는 모든 사용자 · 뷰어'로 열어 뒀습니다.
+  `sheet_if.py`가 `/export?format=csv&gid=0`(Journals 탭)을 **키 없이** 매 수집마다 읽습니다. 연구성과 레이더의
+  `sheet_if.py`를 그대로 가져왔고, `newsroom_if.norm_title` 대신 같은 규칙의 `norm_title`을 안에 뒀습니다.
+- 시트는 저널마다 ISSN이 **하나**(인쇄 또는 전자)뿐이라, OpenAlex가 아는 ISSN 전부(`issn목록`)로 찾고 그래도 없으면 이름으로 찾습니다.
+  20곳 모두 맞았습니다(JMIR은 시트 ISSN이 인쇄판이라 OpenAlex 목록이 없으면 못 찾습니다).
+- 저장소에는 **우리 20곳의 IF·사분위·상위%만** `research.json`의 `저널`에 들어갑니다. 시트 전체는 올리지 않습니다(Clarivate 데이터).
+  시트를 못 읽은 날은 지난 값을 그대로 둡니다.
+- 화면은 IF가 있으면 `IF 8.2 · Q1`, 없으면 예전처럼 `피인용 n`. 저널 표·분석 탭·엑셀에 JCR IF·사분위 열.
+- **20곳 순위를 JCR IF 순으로 다시 매겼습니다.** 같은 후보군(PubMed 2025년 30편 이상 + 헬스커뮤니케이션 중심)에서
+  JCR IF로 다시 재도 **들어가는 20곳은 같았습니다** — 21번째 후보 Health Promotion Practice(1.5)가 20위
+  Health Educ Res(1.6)보다 낮습니다. 순서만 바뀌었습니다(JMIR 8.2 → … → Health Educ Res 1.6).
+  참고로 PubMed에 거의 안 실려 뺀 커뮤니케이션 학술지는 JCR IF로도 높습니다(J Commun 5.3 · Commun Res 4.9 ·
+  New Media Soc 4.6 · Sci Commun 4.2). 넣으려면 '저널 고르는 기준'을 바꿔야 합니다.
 
 ## 수집 (`hc_radar.py`)
 
